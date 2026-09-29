@@ -81,14 +81,27 @@ def make_handler(service: Service, static_dir: str):
                 elif path == "/":
                     self._html(root / "index.html")
                 elif path == "/api/items":
+                    query = parse_qs(urlparse(self.path).query)
                     actor, role = self._identity()
                     del actor
-                    self._json(200, {"items": service.list_items(role)})
+                    self._json(200, {"items": service.list_items(
+                        role, query.get("status", [None])[0],
+                        query.get("outlet", [None])[0])})
                 elif path.startswith("/api/items/") and path.endswith("/records"):
                     item_id = int(path.split("/")[3])
                     actor, role = self._identity()
                     del actor
                     self._json(200, {"records": service.list_records(item_id, role)})
+                elif path.startswith("/api/items/") and path.endswith("/batches"):
+                    item_id = int(path.split("/")[3])
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"batches": service.list_batches(item_id, role)})
+                elif path.startswith("/api/items/") and path.endswith("/versions"):
+                    item_id = int(path.split("/")[3])
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"versions": service.list_versions(item_id, role)})
                 elif path.startswith("/api/items/"):
                     item_id = int(path.rsplit("/", 1)[-1])
                     actor, role = self._identity()
@@ -110,6 +123,9 @@ def make_handler(service: Service, static_dir: str):
                 body = self._body()
                 if path == "/api/items":
                     self._json(201, service.create_item(body, actor, role))
+                elif path == "/api/batches":
+                    response = service.ingest_batch(body, actor, role)
+                    self._json(200 if response.get("duplicate") else 201, response)
                 elif path.startswith("/api/items/") and path.endswith("/records"):
                     item_id = int(path.split("/")[3])
                     self._json(201, service.add_record(item_id, body, actor, role))
