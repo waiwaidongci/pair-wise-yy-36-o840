@@ -73,22 +73,59 @@ def make_handler(service: Service, static_dir: str):
                 status = 500
             self._json(status, {"error": exc.__class__.__name__, "message": str(exc)})
 
+        @staticmethod
+        def _path_id(path: str, marker: str) -> Optional[int]:
+            parts = path.strip("/").split("/")
+            for i, part in enumerate(parts):
+                if part == marker and i + 1 < len(parts):
+                    try:
+                        return int(parts[i + 1])
+                    except ValueError:
+                        raise ValidationError("ID必须是整数")
+            return None
+
         def do_GET(self) -> None:
             try:
-                path = urlparse(self.path).path
+                parsed = urlparse(self.path)
+                path = parsed.path
+                query = parse_qs(parsed.query)
                 if path == "/health":
                     self._json(200, {"status": "ok"})
                 elif path == "/":
                     self._html(root / "index.html")
+                elif path == "/api/outlets":
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"outlets": service.list_outlets(role)})
                 elif path == "/api/items":
                     actor, role = self._identity()
                     del actor
-                    self._json(200, {"items": service.list_items(role)})
+                    status = query.get("status", [None])[0]
+                    self._json(200, {"items": service.list_items(role, status)})
+                elif path == "/api/batches":
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"batches": service.list_batches(None, role)})
                 elif path.startswith("/api/items/") and path.endswith("/records"):
-                    item_id = int(path.split("/")[3])
+                    item_id = self._path_id(path, "items")
                     actor, role = self._identity()
                     del actor
                     self._json(200, {"records": service.list_records(item_id, role)})
+                elif path.startswith("/api/items/") and path.endswith("/batches"):
+                    item_id = self._path_id(path, "items")
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"batches": service.list_batches(item_id, role)})
+                elif path.startswith("/api/items/") and path.endswith("/findings"):
+                    item_id = self._path_id(path, "items")
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"findings": service.list_findings(item_id, role)})
+                elif path.startswith("/api/items/") and path.endswith("/judgments"):
+                    item_id = self._path_id(path, "items")
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"judgments": service.list_judgments(item_id, role)})
                 elif path.startswith("/api/items/"):
                     item_id = int(path.rsplit("/", 1)[-1])
                     actor, role = self._identity()
@@ -97,7 +134,10 @@ def make_handler(service: Service, static_dir: str):
                 elif path == "/api/audit":
                     actor, role = self._identity()
                     del actor
-                    self._json(200, {"events": service.audit(role)})
+                    item_id = query.get("item_id", [None])[0]
+                    if item_id is not None:
+                        item_id = int(item_id)
+                    self._json(200, {"events": service.audit(role, item_id)})
                 else:
                     self._json(404, {"error": "not_found"})
             except Exception as exc:
@@ -108,13 +148,22 @@ def make_handler(service: Service, static_dir: str):
                 path = urlparse(self.path).path
                 actor, role = self._identity()
                 body = self._body()
-                if path == "/api/items":
+                if path == "/api/outlets":
+                    self._json(201, service.register_outlet(body, actor, role))
+                elif path == "/api/items":
                     self._json(201, service.create_item(body, actor, role))
+                elif path == "/api/batches":
+                    # 重复批次返回200并带duplicated=true，新批次返回201
+                    result = service.submit_batch(body, actor, role)
+                    self._json(200 if result.get("duplicated") else 201, result)
                 elif path.startswith("/api/items/") and path.endswith("/records"):
-                    item_id = int(path.split("/")[3])
+                    item_id = self._path_id(path, "items")
                     self._json(201, service.add_record(item_id, body, actor, role))
+                elif path.startswith("/api/items/") and path.endswith("/recompute"):
+                    item_id = self._path_id(path, "items")
+                    self._json(200, service.recompute(item_id, actor, role))
                 elif path.startswith("/api/items/") and path.endswith("/transition"):
-                    item_id = int(path.split("/")[3])
+                    item_id = self._path_id(path, "items")
                     target = body.get("target")
                     expected = body.get("expected_version")
                     self._json(200, service.transition(
